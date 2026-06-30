@@ -1,5 +1,5 @@
 # scanner/pipeline.py
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime
@@ -255,8 +255,8 @@ class ParallelScanPipeline:
             self.logger.info(f"Processing batch {batch_num + 1}/{total_batches} ({len(batch_paths)} files)")
             
             batch_outcomes = self._process_batch_parallel(batch_paths)
-            
-            for outcome in batch_outcomes:
+
+            for path, outcome in batch_outcomes:
                 if outcome.pdf:
                     processed_pdfs.append(outcome.pdf)
                 if outcome.status == "new":
@@ -267,14 +267,30 @@ class ParallelScanPipeline:
                     cached_count += 1
                 elif outcome.status == "failed":
                     failed_count += 1
+
+                # Update progress UI with latest counters and current file
+                try:
+                    if self.progress is not None and self.processing_task_id is not None:
+                        self.progress.update(
+                            self.processing_task_id,
+                            advance=1,
+                            cached=cached_count,
+                            new=new_count,
+                            changed=changed_count,
+                            failed=failed_count,
+                            current_file=(Path(path).name if path else "")
+                        )
+                except Exception:
+                    # Progress update is best-effort; do not fail the pipeline on UI errors
+                    pass
         
         return processed_pdfs, new_count, changed_count, cached_count, failed_count
 
-    def _process_batch_parallel(self, pdf_paths: List[str]) -> List[ProcessOutcome]:
+    def _process_batch_parallel(self, pdf_paths: List[str]) -> List[Tuple[str, ProcessOutcome]]:
         """
         Process a batch of PDFs in parallel.
         """
-        outcomes: List[ProcessOutcome] = []
+        outcomes: List[Tuple[str, ProcessOutcome]] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_path = {
                 executor.submit(self._process_single_file, path): path
@@ -284,10 +300,10 @@ class ParallelScanPipeline:
                 path = future_to_path[future]
                 try:
                     outcome = future.result(timeout=60)
-                    outcomes.append(outcome)
+                    outcomes.append((path, outcome))
                 except Exception as e:
                     self.logger.error(f"Failed to process {path}: {e}")
-                    outcomes.append(ProcessOutcome(pdf=None, status="failed", message=str(e)))
+                    outcomes.append((path, ProcessOutcome(pdf=None, status="failed", message=str(e))))
                 finally:
                     if self.progress is not None and self.processing_task_id is not None:
                         self.progress.update(

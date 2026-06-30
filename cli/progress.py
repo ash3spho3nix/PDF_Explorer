@@ -13,5 +13,10 @@ def create_pipeline_progress() -> Progress:
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
-        TimeElapsedColumn()
+        TimeElapsedColumn(),
+        TextColumn(" • [cyan]Cached: {task.fields[cached]}", justify="right"),
+        TextColumn(" [green]New: {task.fields[new]}", justify="right"),
+        TextColumn(" [yellow]Changed: {task.fields[changed]}", justify="right"),
+        TextColumn(" [red]Failed: {task.fields[failed]}", justify="right"),
+        TextColumn(" • [magenta]{task.fields[current_file]}")
     )

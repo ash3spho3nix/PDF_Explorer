@@ -1,4 +1,5 @@
 # storage/cache.py
+import logging
 from typing import Optional, Dict, Any
 from pathlib import Path
 import hashlib
@@ -22,14 +23,16 @@ class CacheManager:
     - Quick dirty checks using modified_time
     """
     
-    def __init__(self, db_path: str = "pdf_cache.db"):
+    def __init__(self, db_path: str = "pdf_cache.db", logger: Optional[logging.Logger] = None):
         """
         Initialize the cache manager.
         
         Args:
             db_path: Path to SQLite cache database
+            logger: Optional logger for diagnostics
         """
         self.db_path = db_path
+        self.logger = logger or logging.getLogger(__name__)
         self._init_database()
     
     def _init_database(self):
@@ -80,17 +83,14 @@ class CacheManager:
         Complexity: O(1) for SQLite lookup
         """
         try:
-            # Check if file exists
             path_obj = Path(pdf_path)
             if not path_obj.exists():
+                self.logger.debug(f"Cache check: file missing {pdf_path}")
                 return True
             
-            # Get current file stats
             stats = path_obj.stat()
-            current_size = stats.st_size
-            current_mtime = stats.st_mtime
+            current_size, current_mtime = stats.st_size, stats.st_mtime
             
-            # Query cache
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -100,19 +100,53 @@ class CacheManager:
                 row = cursor.fetchone()
                 
                 if not row:
-                    return True  # Not cached
+                    self.logger.debug(f"Cache miss: no entry for {pdf_path}")
+                    return True
                 
                 cached_size, cached_mtime = row
                 
-                # Check if stats match
                 if current_size != cached_size or current_mtime != cached_mtime:
+                    self.logger.debug(f"Cache stale: {pdf_path} changed from {cached_size}/{cached_mtime} to {current_size}/{current_mtime}")
                     return True
                 
                 return False
-                
-        except (IOError, OSError, sqlite3.Error):
+        except (IOError, OSError, sqlite3.Error) as exc:
+            self.logger.warning(f"Cache health check failed for {pdf_path}: {exc}")
             return True
     
+    def get_entry_status(self, pdf_path: str) -> str:
+        """
+        Returns the cache entry status for a PDF path.
+
+        Possible statuses: 'new', 'changed', 'cached'.
+        """
+        try:
+            path_obj = Path(pdf_path)
+            if not path_obj.exists():
+                return "new"
+
+            stats = path_obj.stat()
+            current_size, current_mtime = stats.st_size, stats.st_mtime
+
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT size_bytes, modified_time FROM pdf_cache WHERE path = ?",
+                    (pdf_path,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return "new"
+
+                cached_size, cached_mtime = row
+                if current_size != cached_size or current_mtime != cached_mtime:
+                    return "changed"
+
+                return "cached"
+        except (IOError, OSError, sqlite3.Error) as exc:
+            self.logger.warning(f"Cache status lookup failed for {pdf_path}: {exc}")
+            return "new"
+
     def load(self, pdf_path: str) -> Optional[PDFFile]:
         """
         Load a PDF from cache if available and unchanged.
@@ -126,7 +160,6 @@ class CacheManager:
         Complexity: O(1) for SQLite lookup
         """
         try:
-            # Check if changed first
             if self.is_changed(pdf_path):
                 return None
             
@@ -147,7 +180,6 @@ class CacheManager:
                 if not row:
                     return None
                 
-                # Parse flags from JSON
                 flags = json.loads(row[15]) if row[15] else []
                 
                 # Create PDFFile object
@@ -170,7 +202,8 @@ class CacheManager:
                     flags=flags
                 )
                 
-        except (sqlite3.Error, json.JSONDecodeError):
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
+            self.logger.warning(f"Cache load failed for {pdf_path}: {exc}")
             return None
     
     def save(self, pdf: PDFFile):
@@ -218,8 +251,8 @@ class CacheManager:
                 )
                 conn.commit()
                 
-        except (sqlite3.Error, json.JSONEncodeError):
-            pass
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            self.logger.warning(f"Cache save failed for {pdf.path}: {exc}")
     
     def load_batch(self, pdf_paths: list) -> Dict[str, Optional[PDFFile]]:
         """

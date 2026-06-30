@@ -41,7 +41,8 @@ def test_generate_finds_missing_metadata():
 
     findings = InterestingFindings().generate([pdf])
     assert any(f["type"] == "missing_metadata" for f in findings)
-    assert findings[0]["files"][0]["filename"] == "missing.pdf"
+    missing_metadata_finding = next(f for f in findings if f["type"] == "missing_metadata")
+    assert missing_metadata_finding["files"][0]["filename"] == "missing.pdf"
 
 
 def test_generate_finds_problematic_files():

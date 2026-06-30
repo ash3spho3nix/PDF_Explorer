@@ -19,15 +19,7 @@ class ConfigLoader:
             "max_workers": 8,
             "timeout_seconds": 30,
             "excluded_directories": [".git", "node_modules", "__pycache__", ".pytest_cache"],
-            "chunk_size": 50,
-            "classification_rules": {
-                "Bill": ["invoice", "gst", "total", "amount"],
-                "Ticket": ["boarding", "flight", "seat"],
-                "CV": ["resume", "skills", "experience"],
-                "Thesis": ["dissertation", "university"],
-                "Research": ["abstract", "doi", "ieee"],
-                "Book": ["chapter", "table of contents"]
-            }
+            "chunk_size": 50
         }
 
     @classmethod

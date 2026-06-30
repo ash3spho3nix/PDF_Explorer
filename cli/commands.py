@@ -12,6 +12,7 @@ from utils.logging import get_logger
 from storage.sqlite import SQLiteDB
 from scanner.pipeline import ParallelScanPipeline
 from report.markdown import MarkdownReport
+from cli.progress import create_pipeline_progress
 from report.console import ConsoleReport
 
 app = typer.Typer(help="CLI Toolkit driving automated document space metric compilation cycles.")
@@ -67,19 +68,22 @@ def run_scan(
     run_id = str(uuid.uuid4())[:8]
     config = ConfigLoader.load_from_path()
 
-    pipeline = ParallelScanPipeline(
-        max_workers=config.get("max_workers", 8),
-        batch_size=config.get("chunk_size", 100),
-        cache_path="pdf_cache.db",
-        use_cache=True,
-        logger=logger
-    )
+    # Create and use a Rich progress context for interactive CLI feedback
+    with create_pipeline_progress() as progress:
+        pipeline = ParallelScanPipeline(
+            max_workers=config.get("max_workers", 8),
+            batch_size=config.get("chunk_size", 100),
+            cache_path="pdf_cache.db",
+            use_cache=True,
+            logger=logger,
+            progress=progress
+        )
 
-    try:
-        result = pipeline.execute(str(target_path.resolve()))
-    except Exception as e:
-        typer.secho(f"Error: Scan pipeline failed: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1)
+        try:
+            result = pipeline.execute(str(target_path.resolve()))
+        except Exception as e:
+            typer.secho(f"Error: Scan pipeline failed: {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1)
 
     folder_summaries = _build_folder_summaries(result.pdfs, result.folder_scores)
     category_breakdown = _build_category_breakdown(result.stats)

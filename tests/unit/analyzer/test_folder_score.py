@@ -29,7 +29,7 @@ def test_compute_returns_empty_dict_for_empty_list():
 
 def test_compute_scores_penalties_for_problematic_files():
     files = [
-        make_pdf("/tmp/folder/document1.pdf", "document1.pdf", "Unknown", 0.1, []),
+        make_pdf("/tmp/folder/report1.pdf", "report1.pdf", "Unknown", 0.1, []),
         make_pdf("/tmp/folder/duplicate.pdf", "duplicate.pdf", "Book", 0.9, ["duplicate"]),
         make_pdf("/tmp/folder/normal.pdf", "normal.pdf", "Book", 0.9, []),
     ]

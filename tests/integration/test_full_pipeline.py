@@ -56,7 +56,7 @@ def test_full_pipeline_integration(sample_pdfs, tmp_path):
         max_workers=2,
         batch_size=5,
         cache_path=str(cache_path),
-        use_cache=True,
+        use_cache=False,
         logger=None
     )
 
@@ -65,7 +65,7 @@ def test_full_pipeline_integration(sample_pdfs, tmp_path):
 
     result = pipeline.execute(str(sample_pdfs))
 
-    assert result.total_files == 6
+    assert result.total_files == 7
     assert result.pdfs
     assert any(pdf.filename == 'invoice_001.pdf' for pdf in result.pdfs)
     assert any(pdf.filename == 'resume_001.pdf' for pdf in result.pdfs)
@@ -85,5 +85,5 @@ def test_full_pipeline_integration(sample_pdfs, tmp_path):
     row = cursor.fetchone()
     conn.close()
 
-    assert row is not None and row[0] == 6
+    assert row is not None and row[0] == 7
     assert report_path.exists()

@@ -44,6 +44,10 @@ class SQLiteDB:
                 modified_time REAL,
                 file_hash TEXT,
                 page_count INTEGER,
+                title TEXT,
+                author TEXT,
+                subject TEXT,
+                keywords TEXT,
                 category TEXT,
                 subcategory TEXT,
                 confidence REAL,
@@ -51,6 +55,16 @@ class SQLiteDB:
                 last_scanned REAL
             );
         """)
+
+        existing_columns = {row['name'] for row in cursor.execute("PRAGMA table_info(pdf_index)").fetchall()}
+        for column_name, column_type in [
+            ("title", "TEXT"),
+            ("author", "TEXT"),
+            ("subject", "TEXT"),
+            ("keywords", "TEXT")
+        ]:
+            if column_name not in existing_columns:
+                cursor.execute(f"ALTER TABLE pdf_index ADD COLUMN {column_name} {column_type}")
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS scan_runs (
@@ -69,11 +83,13 @@ class SQLiteDB:
         cursor.execute("""
             INSERT OR REPLACE INTO pdf_index (
                 path, filename, parent_folder, size_bytes, created_time, modified_time,
-                file_hash, page_count, category, subcategory, confidence, flags, last_scanned
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                file_hash, page_count, title, author, subject, keywords,
+                category, subcategory, confidence, flags, last_scanned
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
         """, (
             pdf.path, pdf.filename, pdf.parent_folder, pdf.size_bytes, pdf.created_time, pdf.modified_time,
-            pdf.hash, pdf.page_count, pdf.category, pdf.subcategory, pdf.confidence,
+            pdf.hash, pdf.page_count, pdf.title, pdf.author, pdf.subject, pdf.keywords,
+            pdf.category, pdf.subcategory, pdf.confidence,
             pdf.to_flags_json()
         ))
 
@@ -98,6 +114,10 @@ class SQLiteDB:
             modified_time=row["modified_time"],
             hash=row["file_hash"],
             page_count=row["page_count"],
+            title=row["title"],
+            author=row["author"],
+            subject=row["subject"],
+            keywords=row["keywords"],
             category=row["category"],
             subcategory=row["subcategory"],
             confidence=row["confidence"],

@@ -1,11 +1,11 @@
 # scanner/pipeline.py
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime
 import time
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from models.pdf_file import PDFFile
 from models.scan_context import ScanContext
@@ -37,6 +37,15 @@ class ScanResult:
     duplicates: List[Any]
     folder_scores: Dict[str, Any]
     findings: List[Dict[str, Any]]
+    root_path: Optional[str] = None
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProcessOutcome:
+    pdf: Optional[PDFFile]
+    status: str
+    message: Optional[str] = None
 
 
 class ParallelScanPipeline:
@@ -73,7 +82,8 @@ class ParallelScanPipeline:
         batch_size: int = 100,
         cache_path: str = "pdf_cache.db",
         use_cache: bool = True,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        progress: Optional[Any] = None
     ):
         """
         Initialize the scan pipeline.
@@ -89,9 +99,11 @@ class ParallelScanPipeline:
         self.batch_size = batch_size
         self.use_cache = use_cache
         self.logger = logger or logging.getLogger(__name__)
+        self.progress = progress
+        self.processing_task_id: Optional[int] = None
         
         # Initialize components
-        self.cache_manager = CacheManager(cache_path) if use_cache else None
+        self.cache_manager = CacheManager(cache_path, logger=self.logger) if use_cache else None
         self.scanner = Scanner()
         self.metadata_extractor = MetadataExtractor()
         self.first_page_extractor = FirstPageExtractor()
@@ -120,7 +132,9 @@ class ParallelScanPipeline:
         try:
             # Step 1: Scanner - Discover PDF files
             self.logger.info("Step 1: Discovering PDF files...")
+            scan_start = time.time()
             pdf_paths = self._discover_pdfs(root_path)
+            scan_end = time.time()
             total_files = len(pdf_paths)
             self.logger.info(f"Found {total_files} PDF files")
             
@@ -128,26 +142,58 @@ class ParallelScanPipeline:
                 self.logger.warning("No PDF files found")
                 return self._create_empty_result(start_time)
             
+            if self.progress is not None:
+                self.processing_task_id = self.progress.add_task(
+                    "Processing PDFs",
+                    total=total_files,
+                    cached=0,
+                    new=0,
+                    changed=0,
+                    failed=0,
+                    current_file=""
+                )
+            
             # Step 2: Process files in parallel
             self.logger.info(f"Step 2: Processing files with {self.max_workers} workers...")
+            process_start = time.time()
             processed_pdfs, new_count, changed_count, cached_count, failed_count = self._process_files_parallel(pdf_paths)
             
             # Step 3: Analyze results
             self.logger.info("Step 3: Analyzing results...")
+            process_end = time.time()
+            analysis_start = time.time()
             stats = self._analyze_statistics(processed_pdfs)
             duplicates = self._find_duplicates(processed_pdfs)
             folder_scores = self._compute_folder_scores(processed_pdfs)
             findings = self._generate_findings(processed_pdfs)
+            analysis_end = time.time()
             
             # Step 4: Save to storage
             self.logger.info("Step 4: Saving to storage...")
+            storage_start = time.time()
             self._save_to_storage(processed_pdfs)
+            storage_end = time.time()
             
             end_time = time.time()
             duration = end_time - start_time
             
+            metrics = {
+                "scan_duration": scan_end - scan_start,
+                "processing_duration": process_end - process_start,
+                "analysis_duration": analysis_end - analysis_start,
+                "storage_duration": storage_end - storage_start,
+                "total_duration": duration,
+                "pdfs_processed": total_files,
+                "new_files": new_count,
+                "changed_files": changed_count,
+                "cached_files": cached_count,
+                "failed_files": failed_count,
+                "pdfs_per_second": total_files / duration if duration > 0 else 0.0,
+            }
+            
             self.logger.info(f"Scan completed in {duration:.2f} seconds")
             
+            # Build a ScanReport-like object for downstream report generation compatibility
             return ScanResult(
                 total_files=total_files,
                 new_files=new_count,
@@ -161,7 +207,9 @@ class ParallelScanPipeline:
                 stats=stats,
                 duplicates=duplicates,
                 folder_scores=folder_scores,
-                findings=findings
+                findings=findings,
+                root_path=root_path,
+                metrics=metrics
             )
             
         except Exception as e:
@@ -206,88 +254,77 @@ class ParallelScanPipeline:
             
             self.logger.info(f"Processing batch {batch_num + 1}/{total_batches} ({len(batch_paths)} files)")
             
-            batch_results = self._process_batch_parallel(batch_paths)
+            batch_outcomes = self._process_batch_parallel(batch_paths)
             
-            # Aggregate results
-            for result in batch_results:
-                if result:
-                    processed_pdfs.append(result)
+            for outcome in batch_outcomes:
+                if outcome.pdf:
+                    processed_pdfs.append(outcome.pdf)
+                if outcome.status == "new":
                     new_count += 1
-                elif result is None:
-                    # Check if it was cached or failed
-                    # This is simplified; in practice we'd track status per file
-                    pass
-            
-        # We'll track statuses more accurately by checking cache before processing
-        # For now, we'll approximate
-        total_processed = len(processed_pdfs)
-        total_failed = len(pdf_paths) - total_processed
-        
-        # Estimate cached/changed counts
-        cached_count = 0
-        changed_count = 0
-        if self.use_cache:
-            for path in pdf_paths:
-                if self.cache_manager and not self.cache_manager.is_changed(path):
+                elif outcome.status == "changed":
+                    changed_count += 1
+                elif outcome.status == "cached":
                     cached_count += 1
-            new_count = total_processed - cached_count
-            changed_count = 0  # We don't track this precisely in this version
-        else:
-            new_count = total_processed
+                elif outcome.status == "failed":
+                    failed_count += 1
         
-        return processed_pdfs, new_count, changed_count, cached_count, total_failed
-    
-    def _process_batch_parallel(self, pdf_paths: List[str]) -> List[Optional[PDFFile]]:
+        return processed_pdfs, new_count, changed_count, cached_count, failed_count
+
+    def _process_batch_parallel(self, pdf_paths: List[str]) -> List[ProcessOutcome]:
         """
         Process a batch of PDFs in parallel.
-        
-        Complexity: O(batch_size * processing_time / workers)
-        Memory: O(batch_size) for storing results
         """
-        results = []
-        
+        outcomes: List[ProcessOutcome] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all tasks
             future_to_path = {
                 executor.submit(self._process_single_file, path): path
                 for path in pdf_paths
             }
-            
-            # Collect results as they complete
             for future in as_completed(future_to_path):
                 path = future_to_path[future]
                 try:
-                    result = future.result(timeout=60)  # 60 second timeout per file
-                    results.append(result)
+                    outcome = future.result(timeout=60)
+                    outcomes.append(outcome)
                 except Exception as e:
                     self.logger.error(f"Failed to process {path}: {e}")
-                    results.append(None)
-        
-        return results
-    
-    def _process_single_file(self, pdf_path: str) -> Optional[PDFFile]:
+                    outcomes.append(ProcessOutcome(pdf=None, status="failed", message=str(e)))
+                finally:
+                    if self.progress is not None and self.processing_task_id is not None:
+                        self.progress.update(
+                            self.processing_task_id,
+                            advance=1,
+                            current_file=path
+                        )
+        return outcomes
+
+    def _process_single_file(self, pdf_path: str) -> ProcessOutcome:
         """
         Process a single PDF file through the pipeline.
         
         Complexity: O(1) for cache, O(file_size) for extraction and hashing
         Memory: O(1) for processing
         """
+        status = "new"
         try:
-            # Check cache
             if self.use_cache and self.cache_manager:
-                cached_pdf = self.cache_manager.load(pdf_path)
-                if cached_pdf:
-                    return cached_pdf
+                status = self.cache_manager.get_entry_status(pdf_path)
+                if status == "cached":
+                    cached_pdf = self.cache_manager.load(pdf_path)
+                    if cached_pdf:
+                        self.logger.debug(f"Cache hit: {pdf_path}")
+                        return ProcessOutcome(pdf=cached_pdf, status="cached")
+                    status = "changed"
+                elif status == "changed":
+                    self.logger.debug(f"Cache stale: {pdf_path}")
+                else:
+                    self.logger.debug(f"Cache miss: {pdf_path}")
             
-            # Extract metadata
             metadata = self.metadata_extractor.extract_metadata(pdf_path)
             if not metadata:
-                return None
+                return ProcessOutcome(pdf=None, status="failed", message="metadata extraction failed")
             
-            # Extract first page text
             first_page_text = self.first_page_extractor.extract(pdf_path)
             
-            # Create base PDFFile
             path_obj = Path(pdf_path)
             stats = path_obj.stat()
             
@@ -298,7 +335,7 @@ class ParallelScanPipeline:
                 size_bytes=stats.st_size,
                 created_time=stats.st_ctime,
                 modified_time=stats.st_mtime,
-                hash=None,  # Will be computed later by duplicate detector
+                hash=None,
                 page_count=metadata.get('page_count'),
                 title=metadata.get('title'),
                 author=metadata.get('author'),
@@ -307,27 +344,26 @@ class ParallelScanPipeline:
                 category="Unknown",
                 subcategory=None,
                 confidence=0.0,
-                flags=[]
+                flags=[],
+                classification_explanation=None
             )
             
-            # Set flags
             if metadata.get('encrypted', False):
                 pdf.flags.append("encrypted")
             
-            # Classify
-            category, confidence, _ = self.classifier.classify(pdf, first_page_text)
+            category, confidence, debug_info = self.classifier.classify(pdf, first_page_text)
             pdf.category = category
             pdf.confidence = confidence
+            pdf.classification_explanation = debug_info
             
-            # Cache the result
             if self.use_cache and self.cache_manager:
                 self.cache_manager.save(pdf)
             
-            return pdf
+            return ProcessOutcome(pdf=pdf, status=status)
             
         except Exception as e:
             self.logger.error(f"Error processing {pdf_path}: {e}")
-            return None
+            return ProcessOutcome(pdf=None, status="failed", message=str(e))
     
     def _analyze_statistics(self, pdfs: List[PDFFile]) -> Dict[str, Any]:
         """Compute statistics for the PDF collection."""
@@ -383,7 +419,20 @@ class ParallelScanPipeline:
             stats={},
             duplicates=[],
             folder_scores={},
-            findings=[]
+            findings=[],
+            metrics={
+                "scan_duration": 0.0,
+                "processing_duration": 0.0,
+                "analysis_duration": 0.0,
+                "storage_duration": 0.0,
+                "total_duration": end_time - start_time,
+                "pdfs_processed": 0,
+                "new_files": 0,
+                "changed_files": 0,
+                "cached_files": 0,
+                "failed_files": 0,
+                "pdfs_per_second": 0.0,
+            }
         )
     
     def get_scan_summary(self, result: ScanResult) -> str:

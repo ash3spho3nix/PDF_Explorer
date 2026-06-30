@@ -26,12 +26,11 @@ class MetadataExtractor:
             # Keep stream processing tight. Avoid pulling the entire file structure into memory.
             with open(pdf_path, "rb") as stream:
                 reader = pypdf.PdfReader(stream)
-                
-                result["page_count"] = len(reader.pages)
-                
-                if reader.is_encrypted:
+                if getattr(reader, "is_encrypted", False):
                     result["encrypted"] = True
                     return result
+
+                result["page_count"] = len(reader.pages)
                 
                 info = reader.metadata
                 if info:

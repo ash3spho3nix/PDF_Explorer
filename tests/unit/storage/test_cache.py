@@ -3,7 +3,7 @@ from pathlib import Path
 
 from storage.cache import CacheManager
 from models.pdf_file import PDFFile
-
+import sqlite3
 
 def make_pdf(path: str) -> PDFFile:
     return PDFFile(

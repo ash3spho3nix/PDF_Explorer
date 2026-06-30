@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import json
 
 
@@ -37,6 +37,7 @@ class PDFFile:
     confidence: float
 
     flags: List[str]
+    classification_explanation: Optional[Dict[str, Any]] = None
 
     def to_flags_json(self) -> str:
         """Serializes the flags list into a JSON-formatted string for SQLite storage."""

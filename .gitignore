@@ -1,0 +1,36 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite and other local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+*.pdf
+
+# Environment files
+.env
+.venv/
+venv/
+
+# Editor and system files
+.DS_Store
+Thumbs.db
+
+# Project tracker and temporary documentation
+TDD*.md
+Implementation_tracker*.md
+*tracker*.md
+
+# Generated reports and fixtures
+tests/integration/fixtures/expected_report.md
+
+# Optional: ignore check outputs
+.coverage
+htmlcov/
+!README.md
+*.md

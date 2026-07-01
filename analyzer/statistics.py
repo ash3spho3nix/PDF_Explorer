@@ -5,7 +5,7 @@ from datetime import datetime
 import math
 
 from models.pdf_file import PDFFile
-
+from intelligence import IAMProcessor, IAMConfig
 
 class StatisticsAnalyzer:
     """
@@ -267,3 +267,21 @@ class StatisticsAnalyzer:
                 }
         
         return consistency
+        
+    def analyze_with_intelligence(self, pdfs, config_path=None):
+        """Optional hook to run IAM."""
+        if config_path:
+            import yaml
+            with open(config_path) as f:
+                cfg_dict = yaml.safe_load(f)
+                iam_config = IAMConfig(**cfg_dict.get("iam", {}))
+        else:
+            iam_config = IAMConfig()
+
+        if iam_config.enabled:
+            processor = IAMProcessor(self.db_path, iam_config)
+            results = processor.analyze(pdfs)
+            # Store results in self.iam_results for report generator
+            self.iam_results = results
+            return results
+        return {}    

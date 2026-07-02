@@ -1,0 +1,3 @@
+db_path: /home/user/.pdf_inventory/cache.db
+iam_endpoint: http://localhost:8000  # optional
+log_level: INFO

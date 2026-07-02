@@ -1,0 +1,6 @@
+<div class="stats-cards">
+  <div class="card">Total PDFs: {{ stats.totals.total_pdfs if stats.totals else stats.get('total_pdfs', 0) }}</div>
+  <div class="card">Total Size: {{ stats.totals.total_size if stats.totals else stats.get('total_size', 0) }}</div>
+  <div class="card">Unknown: {{ stats.totals.unknown_count if stats.totals else stats.get('unknown_count', 0) }}</div>
+  <div class="card">Duplicates: {{ stats.totals.duplicate_count if stats.totals else stats.get('duplicate_count', 0) }}</div>
+</div>

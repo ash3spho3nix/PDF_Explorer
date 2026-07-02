@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Dashboard</h2>
+  <div id="metrics">
+    <!-- Metrics will be rendered server-side -->
+    <div hx-get="/api/stats" hx-trigger="load" hx-swap="outerHTML">Loading stats...</div>
+  </div>
+  <div id="charts">
+    <!-- Chart containers -->
+    <canvas id="storageChart" width="600" height="200"></canvas>
+    <canvas id="categoriesChart" width="600" height="200"></canvas>
+  </div>
+  <script>
+    async function renderCharts(){
+      const s = await fetch('/api/charts/storage').then(r=>r.json());
+      const ctx = document.getElementById('storageChart').getContext('2d');
+      new Chart(ctx, {type:'pie', data:{labels:s.labels, datasets:[{data:s.values}]}});
+
+      const c = await fetch('/api/charts/categories').then(r=>r.json());
+      const ctx2 = document.getElementById('categoriesChart').getContext('2d');
+      new Chart(ctx2, {type:'bar', data:{labels:c.labels, datasets:[{label:'Categories', data:c.values}]}});
+    }
+    document.addEventListener('DOMContentLoaded', renderCharts);
+  </script>
+{% endblock %}

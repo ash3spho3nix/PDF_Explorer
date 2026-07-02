@@ -1,7 +1,7 @@
 # classifier/rules.py
-from typing import Tuple, Dict, List, Optional
+from typing import Tuple, Dict, List, Optional, Any, Iterable
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from models.pdf_file import PDFFile
 
@@ -13,6 +13,32 @@ class ClassificationRule:
     keywords: List[str]
     weight: float = 1.0
     case_sensitive: bool = False
+
+
+@dataclass
+class ClassificationResult:
+    """Structured classification output with backward-compatible tuple behavior."""
+    category: str
+    subcategory: Optional[str]
+    confidence: float
+    reasoning: Dict[str, Any]
+    topics: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+
+    def __iter__(self) -> Iterable[Any]:
+        return iter((self.category, self.confidence, self.reasoning))
+
+    def __getitem__(self, index: int) -> Any:
+        if index == 0:
+            return self.category
+        if index == 1:
+            return self.confidence
+        if index == 2:
+            return self.reasoning
+        raise IndexError("ClassificationResult index out of range")
+
+    def __len__(self) -> int:
+        return 3
 
 
 class RuleClassifier:
@@ -31,6 +57,7 @@ class RuleClassifier:
     def __init__(self):
         """Initialize the classifier with hardcoded rules."""
         self.rules = self._initialize_rules()
+        self.subcategory_map = self._initialize_subcategory_map()
         self._compiled_patterns = {}
         self._compile_patterns()
     
@@ -66,7 +93,45 @@ class RuleClassifier:
                         flags=flags
                     )
     
-    def classify(self, pdf: PDFFile, text: str = "") -> Tuple[str, float, Dict[str, any]]:
+    def _initialize_subcategory_map(self) -> Dict[str, Dict[str, List[str]]]:
+        """Define deeper category subtypes for hierarchical classification."""
+        return {
+            "Bill": {
+                "Tax Document": ["gst", "vat", "tds", "income tax", "tax invoice"],
+                "Receipt": ["receipt", "paid", "payment received", "transaction"],
+                "Quote": ["quotation", "estimate", "quote", "proforma"],
+                "Invoice": ["invoice", "bill to", "due date", "amount due"],
+            },
+            "Ticket": {
+                "Flight": ["boarding", "airline", "flight", "gate", "departure", "arrival", "passenger"],
+                "Train": ["rail", "train", "platform", "coach", "pnr"],
+                "Bus": ["bus", "coach", "operator", "boarding point"],
+                "Event": ["admission", "venue", "event", "show", "concert", "entry pass"],
+            },
+            "CV": {
+                "Resume": ["resume", "curriculum vitae"],
+                "Cover Letter": ["cover letter", "dear hiring", "dear recruiter", "i am writing"],
+                "Portfolio": ["portfolio", "projects", "github", "behance", "dribbble"],
+            },
+            "Thesis": {
+                "PhD": ["phd", "doctorate", "doctoral", "doctor of philosophy"],
+                "Masters": ["master", "msc", "m.tech", "m.s.", "masters of"],
+                "Bachelor": ["bachelor", "undergraduate", "b.tech", "b.sc", "b.e."],
+            },
+            "Research": {
+                "Preprint": ["arxiv", "preprint", "submitted to", "under review"],
+                "Conference Paper": ["conference", "proceedings", "workshop", "symposium", "acm", "ieee"],
+                "Journal Article": ["journal", "doi", "elsevier", "springer", "volume", "issue", "pages"],
+            },
+            "Book": {
+                "Textbook": ["textbook", "exercises", "problems", "solutions", "edition"],
+                "Handbook": ["handbook", "reference", "manual", "guide", "compendium"],
+                "Novel": ["novel", "fiction", "chapter one", "the end", "prologue", "epilogue"],
+                "Technical Manual": ["installation", "configuration", "troubleshooting", "user manual", "operator"],
+            },
+        }
+    
+    def classify(self, pdf: PDFFile, text: str = "") -> "ClassificationResult":
         """
         Classify a PDF using rules in order: filename, metadata, first page text.
         
@@ -113,15 +178,34 @@ class RuleClassifier:
             best_category = max(category_scores, key=lambda k: category_scores[k])
             max_score = category_scores[best_category]
             
-            # Calculate confidence based on matching density
-            total_checks = sum(len(matches) for matches in debug_info.values())
-            confidence = min(1.0, max_score / (1.0 + total_checks * 0.1))
-            
+            total_matches = (
+                debug_info["filename_matches"] +
+                debug_info["metadata_matches"] +
+                debug_info["text_matches"]
+            )
+            matched_keywords = list(dict.fromkeys(total_matches))
+            subcategory = self._derive_subcategory(best_category, matched_keywords)
+            confidence = min(1.0, max_score / (1.0 + len(total_matches) * 0.1))
             debug_info["scores"] = category_scores
-            return best_category, confidence, debug_info
-        
-        # No matches found
-        return "Unknown", 0.0, debug_info
+
+            return ClassificationResult(
+                category=best_category,
+                subcategory=subcategory,
+                confidence=confidence,
+                reasoning=debug_info,
+                topics=matched_keywords,
+                keywords=matched_keywords,
+            )
+
+        debug_info["scores"] = category_scores
+        return ClassificationResult(
+            category="Unknown",
+            subcategory=None,
+            confidence=0.0,
+            reasoning=debug_info,
+            topics=[],
+            keywords=[],
+        )
     
     def _check_text(self, text: str, scores: Dict[str, float], matches: List[str]):
         """
@@ -140,11 +224,24 @@ class RuleClassifier:
                 
                 if pattern.search(text_lower):
                     rule_score += 1
-                    matches.append(keyword)
+                    if keyword not in matches:
+                        matches.append(keyword)
             
             if rule_score > 0:
                 # Weighted score based on number of matches
                 scores[rule.category] = scores.get(rule.category, 0) + (rule_score * rule.weight)
+
+    def _derive_subcategory(self, category: str, matches: List[str]) -> Optional[str]:
+        """Return the best matching subcategory for the chosen category."""
+        if category not in self.subcategory_map:
+            return None
+
+        subcategories = self.subcategory_map[category]
+        for subcategory, keywords in subcategories.items():
+            for match in matches:
+                if match in keywords:
+                    return subcategory
+        return None
     
     def add_rule(self, category: str, keywords: List[str], weight: float = 1.0, case_sensitive: bool = False):
         """

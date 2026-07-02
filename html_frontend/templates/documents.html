@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Documents</h2>
+  <div class="toolbar">
+    <input id="doc-search" name="q" placeholder="Search documents" hx-get="/api/documents" hx-trigger="keyup changed delay:500ms" hx-target="#documents-table" hx-include="[name=q]">
+  </div>
+  <div id="documents-table" hx-get="/api/documents?page=1&limit=50" hx-trigger="load" hx-swap="outerHTML">Loading documents...</div>
+{% endblock %}

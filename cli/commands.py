@@ -5,6 +5,7 @@ Typer command execution layers wire up functional infrastructure processing endp
 import time
 import uuid
 from pathlib import Path
+from typing import List
 import typer
 from models.scan_context import ScanContext, ScanReport, FolderSummary
 from config.loader import ConfigLoader
@@ -14,6 +15,7 @@ from scanner.pipeline import ParallelScanPipeline
 from report.markdown import MarkdownReport
 from cli.progress import create_pipeline_progress
 from report.console import ConsoleReport
+import json
 
 app = typer.Typer(help="CLI Toolkit driving automated document space metric compilation cycles.")
 logger = get_logger()
@@ -73,7 +75,7 @@ def run_scan(
         pipeline = ParallelScanPipeline(
             max_workers=config.get("max_workers", 8),
             batch_size=config.get("chunk_size", 100),
-            cache_path="pdf_cache.db",
+            cache_path="pdf_inventory.db",
             use_cache=True,
             logger=logger,
             progress=progress
@@ -120,3 +122,119 @@ def run_scan(
     # Print terminal readout summaries
     console_engine = ConsoleReport()
     console_engine.display_summary(report_data)
+
+
+@app.command("mcp")
+def mcp_serve(
+    db_path: str = typer.Option("pdf_inventory.db", "--db", help="SQLite DB the MCP bridge reads from."),
+):
+    """
+    Start the MCP bridge server (stdio transport) for LM Studio / Ollama / Claude Desktop.
+    Run a scan first to populate the database.
+    """
+    import os
+    os.environ["PDF_BRIDGE_DB_PATH"] = db_path
+
+    try:
+        from mcp_bridge.server import main as mcp_main
+    except ImportError as e:
+        typer.secho(f"Error: MCP dependencies missing — run: pip install mcp\n{e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    typer.secho(f"Starting PDF Explorer MCP bridge (db={db_path})", fg=typer.colors.GREEN)
+    mcp_main()
+
+
+@app.command("watch")
+def watch_mode(
+    paths: List[Path] = typer.Argument(..., help="One or more directories to watch for PDF changes."),
+    db_path: str = typer.Option("pdf_inventory.db", "--db", help="SQLite cache DB to update on changes."),
+    debounce: float = typer.Option(2.0, "--debounce", help="Seconds to wait before processing a burst of events."),
+    state_dir: str = typer.Option("./watch_state", "--state-dir", help="Directory to persist recovery checkpoints."),
+):
+    """
+    Watch directories for PDF changes and incrementally update the cache.
+    Press Ctrl+C to stop.
+    """
+    from watch.service import WatchService
+    from watch.config import WatchConfig
+
+    missing = [str(p) for p in paths if not p.is_dir()]
+    if missing:
+        typer.secho(f"Error: not a directory: {', '.join(missing)}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    config = WatchConfig(
+        directories=[str(p.resolve()) for p in paths],
+        cache_path=db_path,
+        debounce_delay=debounce,
+        state_dir=state_dir,
+    )
+    typer.secho(f"Watching {len(paths)} director{'y' if len(paths) == 1 else 'ies'}. Ctrl+C to stop.", fg=typer.colors.GREEN)
+    WatchService(config).start()
+
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind the server to."),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on."),
+    db_path: str = typer.Option("pdf_inventory.db", "--db", help="SQLite DB path the frontend reads from."),
+):
+    """
+    Launch the HTML frontend (FastAPI + HTMX) to browse the PDF index.
+    Run a scan first to populate the database.
+    """
+    import os
+    os.environ["PDF_DB"] = db_path
+
+    try:
+        import uvicorn
+    except ImportError:
+        typer.secho("Error: uvicorn not installed. Run: pip install uvicorn", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    typer.secho(f"Starting PDF Explorer UI at http://{host}:{port}", fg=typer.colors.GREEN)
+    uvicorn.run("html_frontend.app:app", host=host, port=port, reload=False)
+
+
+@app.command("diagnostics")
+def diagnostics(
+    target_path: Path = typer.Argument(..., help="Path to scan for diagnostics."),
+    output: Path = typer.Option(Path("diagnostics.json"), "--output", "-o", help="JSON output file for diagnostics")
+):
+    """
+    Runs a timed scan and emits diagnostics/benchmark metrics as JSON.
+    """
+    if not target_path.is_dir():
+        typer.secho(f"Error: Target path '{target_path}' is invalid.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    config = ConfigLoader.load_from_path()
+
+    # Run pipeline without interactive progress for diagnostics
+    pipeline = ParallelScanPipeline(
+        max_workers=config.get("max_workers", 8),
+        batch_size=config.get("chunk_size", 100),
+        cache_path="pdf_inventory.db",
+        use_cache=True,
+        logger=logger,
+        progress=None
+    )
+
+    start = time.time()
+    try:
+        result = pipeline.execute(str(target_path.resolve()))
+    except Exception as e:
+        typer.secho(f"Error: diagnostics pipeline failed: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    end = time.time()
+
+    metrics = result.metrics if hasattr(result, 'metrics') else {}
+    metrics.update({"diagnostics_run_time": end - start})
+
+    try:
+        output.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        typer.secho(f"Diagnostics written to {output}", fg=typer.colors.GREEN)
+    except OSError as e:
+        typer.secho(f"Failed to write diagnostics file: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)

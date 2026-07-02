@@ -1,7 +1,23 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
-from fuzzywuzzy import fuzz
+try:
+    from fuzzywuzzy import fuzz  # optional dependency
+except Exception:
+    # Fallback implementation using difflib for environments without fuzzywuzzy
+    from difflib import SequenceMatcher
+
+    class _FuzzFallback:
+        @staticmethod
+        def token_sort_ratio(a: str, b: str) -> int:
+            if not a or not b:
+                return 0
+            # simple token-sort approximation
+            sa = " ".join(sorted(a.split()))
+            sb = " ".join(sorted(b.split()))
+            return int(SequenceMatcher(None, sa, sb).ratio() * 100)
+
+    fuzz = _FuzzFallback()
 from sklearn.feature_extraction.text import TfidfVectorizer
 from .models import PDFMetadata
 from .config import IAMConfig

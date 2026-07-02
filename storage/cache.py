@@ -1,6 +1,6 @@
 # storage/cache.py
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 import hashlib
 import json
@@ -57,6 +57,7 @@ class CacheManager:
                     subcategory TEXT,
                     confidence REAL,
                     flags TEXT,
+                    classification_explanation TEXT,
                     last_cached REAL
                 )
             """)
@@ -169,7 +170,7 @@ class CacheManager:
                     """
                     SELECT path, filename, parent_folder, size_bytes, created_time, modified_time,
                            file_hash, page_count, title, author, subject, keywords,
-                           category, subcategory, confidence, flags
+                           category, subcategory, confidence, flags, classification_explanation
                     FROM pdf_cache
                     WHERE path = ?
                     """,
@@ -181,6 +182,12 @@ class CacheManager:
                     return None
                 
                 flags = json.loads(row[15]) if row[15] else []
+                classification_explanation = None
+                if row[16]:
+                    try:
+                        classification_explanation = json.loads(row[16])
+                    except json.JSONDecodeError:
+                        classification_explanation = None
                 
                 # Create PDFFile object
                 return PDFFile(
@@ -199,7 +206,8 @@ class CacheManager:
                     category=row[12],
                     subcategory=row[13],
                     confidence=row[14],
-                    flags=flags
+                    flags=flags,
+                    classification_explanation=classification_explanation
                 )
                 
         except (sqlite3.Error, json.JSONDecodeError) as exc:
@@ -226,8 +234,8 @@ class CacheManager:
                     INSERT OR REPLACE INTO pdf_cache (
                         path, filename, parent_folder, size_bytes, created_time, modified_time,
                         file_hash, page_count, title, author, subject, keywords,
-                        category, subcategory, confidence, flags, last_cached
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        category, subcategory, confidence, flags, classification_explanation, last_cached
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         pdf.path,
@@ -246,6 +254,7 @@ class CacheManager:
                         pdf.subcategory,
                         pdf.confidence,
                         flags_json,
+                        json.dumps(pdf.classification_explanation) if pdf.classification_explanation is not None else None,
                         datetime.now().timestamp()
                     )
                 )
@@ -272,6 +281,27 @@ class CacheManager:
             results[path] = self.load(path)
         return results
     
+    def delete(self, pdf_path: str):
+        """Remove a cached entry by path."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.cursor().execute("DELETE FROM pdf_cache WHERE path = ?", (pdf_path,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            self.logger.warning(f"Cache delete failed for {pdf_path}: {exc}")
+
+    def update_path(self, old_path: str, new_path: str):
+        """Rename a cached entry when a file is moved."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.cursor().execute(
+                    "UPDATE pdf_cache SET path = ?, filename = ? WHERE path = ?",
+                    (new_path, Path(new_path).name, old_path)
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            self.logger.warning(f"Cache path update failed {old_path} → {new_path}: {exc}")
+
     def clear(self):
         """Clear all cached entries."""
         try:
@@ -319,3 +349,64 @@ class CacheManager:
                 conn.commit()
         except sqlite3.Error:
             pass
+    
+    def get_all_pdfs(self) -> List[PDFFile]:
+        """
+        Retrieve all cached PDFs.
+        
+        Returns:
+            List of all PDFFile objects in the cache
+            
+        Complexity: O(n) where n is number of cached PDFs
+        Memory: O(n) for storing results
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT path, filename, parent_folder, size_bytes, created_time, modified_time,
+                           file_hash, page_count, title, author, subject, keywords,
+                           category, subcategory, confidence, flags, classification_explanation
+                    FROM pdf_cache
+                    ORDER BY modified_time DESC
+                    """
+                )
+                rows = cursor.fetchall()
+                
+                pdfs = []
+                for row in rows:
+                    flags = json.loads(row[15]) if row[15] else []
+                    classification_explanation = None
+                    if row[16]:
+                        try:
+                            classification_explanation = json.loads(row[16])
+                        except json.JSONDecodeError:
+                            classification_explanation = None
+                    
+                    pdf = PDFFile(
+                        path=row[0],
+                        filename=row[1],
+                        parent_folder=row[2],
+                        size_bytes=row[3],
+                        created_time=row[4],
+                        modified_time=row[5],
+                        hash=row[6],
+                        page_count=row[7],
+                        title=row[8],
+                        author=row[9],
+                        subject=row[10],
+                        keywords=row[11],
+                        category=row[12],
+                        subcategory=row[13],
+                        confidence=row[14],
+                        flags=flags,
+                        classification_explanation=classification_explanation
+                    )
+                    pdfs.append(pdf)
+                
+                return pdfs
+                
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
+            self.logger.warning(f"Failed to get all PDFs: {exc}")
+            return []

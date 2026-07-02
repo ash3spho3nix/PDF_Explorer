@@ -1,0 +1,7 @@
+google_drive:
+  client_id: "xxx.apps.googleusercontent.com"
+  client_secret: "xxx"
+  token_dir: "~/.pdf_inventory/tokens"
+cache:
+  cache_dir: "~/.pdf_inventory/cache"
+  max_size_gb: 10

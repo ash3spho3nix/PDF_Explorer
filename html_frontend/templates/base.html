@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PDF Explorer</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+    <script src="/static/js/htmx-helpers.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <header>
+      <div class="header-inner">
+        <h1>PDF Explorer</h1>
+        <form action="/search">
+          <input name="q" placeholder="Search...">
+        </form>
+      </div>
+    </header>
+    <div class="layout">
+      <nav class="sidebar">
+        <ul>
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/documents">Documents</a></li>
+          <li><a href="/categories">Categories</a></li>
+          <li><a href="/topics">Topics</a></li>
+          <li><a href="/duplicates">Duplicates</a></li>
+          <li><a href="/similarity">Similarity</a></li>
+          <li><a href="/findings">Findings</a></li>
+        </ul>
+      </nav>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </body>
+</html>

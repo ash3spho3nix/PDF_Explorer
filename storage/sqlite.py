@@ -52,6 +52,7 @@ class SQLiteDB:
                 subcategory TEXT,
                 confidence REAL,
                 flags TEXT,
+                classification_explanation TEXT,
                 last_scanned REAL
             );
         """)
@@ -61,11 +62,47 @@ class SQLiteDB:
             ("title", "TEXT"),
             ("author", "TEXT"),
             ("subject", "TEXT"),
-            ("keywords", "TEXT")
+            ("keywords", "TEXT"),
+            ("subcategory", "TEXT"),
+            ("confidence", "REAL"),
+            ("flags", "TEXT"),
+            ("classification_explanation", "TEXT"),
+            ("last_scanned", "REAL")
         ]:
             if column_name not in existing_columns:
                 cursor.execute(f"ALTER TABLE pdf_index ADD COLUMN {column_name} {column_type}")
-        
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pdf_cache (
+                path TEXT PRIMARY KEY,
+                filename TEXT,
+                parent_folder TEXT,
+                size_bytes INTEGER,
+                created_time REAL,
+                modified_time REAL,
+                file_hash TEXT,
+                page_count INTEGER,
+                title TEXT,
+                author TEXT,
+                subject TEXT,
+                keywords TEXT,
+                category TEXT,
+                subcategory TEXT,
+                confidence REAL,
+                flags TEXT,
+                classification_explanation TEXT,
+                last_cached REAL
+            )
+        """)
+
+        existing_cache_columns = {row['name'] for row in cursor.execute("PRAGMA table_info(pdf_cache)").fetchall()}
+        for column_name, column_type in [
+            ("classification_explanation", "TEXT"),
+            ("last_cached", "REAL")
+        ]:
+            if column_name not in existing_cache_columns:
+                cursor.execute(f"ALTER TABLE pdf_cache ADD COLUMN {column_name} {column_type}")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS scan_runs (
                 run_id TEXT PRIMARY KEY,
@@ -84,13 +121,14 @@ class SQLiteDB:
             INSERT OR REPLACE INTO pdf_index (
                 path, filename, parent_folder, size_bytes, created_time, modified_time,
                 file_hash, page_count, title, author, subject, keywords,
-                category, subcategory, confidence, flags, last_scanned
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                category, subcategory, confidence, flags, classification_explanation, last_scanned
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
         """, (
             pdf.path, pdf.filename, pdf.parent_folder, pdf.size_bytes, pdf.created_time, pdf.modified_time,
             pdf.hash, pdf.page_count, pdf.title, pdf.author, pdf.subject, pdf.keywords,
             pdf.category, pdf.subcategory, pdf.confidence,
-            pdf.to_flags_json()
+            pdf.to_flags_json(),
+            json.dumps(pdf.classification_explanation) if pdf.classification_explanation is not None else None
         ))
 
     def update_pdf(self, pdf: PDFFile):
@@ -105,6 +143,13 @@ class SQLiteDB:
         if not row:
             return None
             
+        classification_explanation = None
+        if row["classification_explanation"]:
+            try:
+                classification_explanation = json.loads(row["classification_explanation"])
+            except json.JSONDecodeError:
+                classification_explanation = None
+
         return PDFFile(
             path=row["path"],
             filename=row["filename"],
@@ -121,7 +166,8 @@ class SQLiteDB:
             category=row["category"],
             subcategory=row["subcategory"],
             confidence=row["confidence"],
-            flags=PDFFile.from_flags_json(row["flags"])
+            flags=PDFFile.from_flags_json(row["flags"]),
+            classification_explanation=classification_explanation
         )
 
     def save_run_metrics(self, run_id: str, start: float, end: float, total_count: int, total_size: int):

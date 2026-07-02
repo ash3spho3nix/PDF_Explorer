@@ -367,10 +367,11 @@ class ParallelScanPipeline:
             if metadata.get('encrypted', False):
                 pdf.flags.append("encrypted")
             
-            category, confidence, debug_info = self.classifier.classify(pdf, first_page_text)
-            pdf.category = category
-            pdf.confidence = confidence
-            pdf.classification_explanation = debug_info
+            classification = self.classifier.classify(pdf, first_page_text)
+            pdf.category = classification.category
+            pdf.subcategory = classification.subcategory
+            pdf.confidence = classification.confidence
+            pdf.classification_explanation = classification.reasoning
             
             if self.use_cache and self.cache_manager:
                 self.cache_manager.save(pdf)

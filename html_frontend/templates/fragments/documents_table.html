@@ -1,0 +1,15 @@
+<table>
+  <thead>
+    <tr><th>Filename</th><th>Author</th><th>Confidence</th><th>Modified</th></tr>
+  </thead>
+  <tbody>
+  {% for d in items %}
+    <tr>
+      <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a></td>
+      <td>{{ d.author or '' }}</td>
+      <td>{{ d.confidence }}</td>
+      <td>{{ d.modified_time }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>

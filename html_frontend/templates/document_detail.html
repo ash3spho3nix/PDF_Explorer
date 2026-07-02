@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Document Detail</h2>
+  <div id="doc-detail" hx-get="/api/documents/{{ doc_id }}" hx-trigger="load" hx-swap="outerHTML">Loading...</div>
+{% endblock %}

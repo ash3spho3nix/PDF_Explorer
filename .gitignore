@@ -33,5 +33,7 @@ tests/integration/fixtures/expected_report.md
 # Optional: ignore check outputs
 .coverage
 htmlcov/
-*.md
-!README.md
+
+.pytest_cache/
+.ruff_cache/
+Summary.md

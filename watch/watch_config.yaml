@@ -1,0 +1,12 @@
+# watch_config.yaml
+directories:
+  - /home/user/Documents
+  - /home/user/Downloads
+exclude_patterns:
+  - "*.tmp"
+  - "**/temp/*"
+scan_interval: 300    # full scan every 5 minutes
+debounce_delay: 2.0
+state_dir: /var/lib/pdf_inventory/watch_state
+cache_path: /home/user/.pdf_inventory/cache.db
+log_file: /var/log/pdf_inventory/watch.log

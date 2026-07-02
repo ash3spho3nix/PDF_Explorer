@@ -1,4 +1,3 @@
----
 
 # 📚 PDF Explorer
 
@@ -97,11 +96,9 @@ Early-stage, actively evolving tool for personal knowledge exploration.
 
 ---
 
-# 🎯 Demo Flow (this is IMPORTANT for GitHub stars)
+# 🎯 Demo Flow
 
-Your repo needs a **“wow in 30 seconds” narrative**.
-
-Here’s the ideal demo sequence:
+Here’s the demo sequence:
 
 ---
 
